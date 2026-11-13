@@ -3,3 +3,7 @@ __pycache__/
 *.pyo
 .env
 .DS_Store
+# Runtime sqlite store (created next to the aegis_lite module)
+aegis_lite.db
+aegis_lite.db-wal
+aegis_lite.db-shm

@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""Demo: 6 scenarios. Run: python3 demo.py"""
+"""Demo: 7 scenarios. Run: python3 demo.py"""
+import os
+import tempfile
+
 from aegis_lite import Guard
 
 
 def main():
+    # A throwaway store so every run is identical. In real use the
+    # default store (aegis_lite.db next to the module) persists.
+    fd, store_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
     guard = Guard(
         per_tx_limit_usd=1000,
         daily_limit_usd=500,
         blocklist=["0xScamWallet", "scam@example.com"],
         max_price_deviation_pct=10,
+        store_path=store_path,
     )
 
     scenarios = [
@@ -20,6 +28,7 @@ def main():
                 "amount_usd": 42,
                 "action": "purchase",
                 "token": "USDC",
+                "payment_id": "demo-pay-001",
                 "reference_price_usd": 42,
                 "quoted_price_usd": 42,
             },
@@ -94,8 +103,45 @@ def main():
         for r in result["reasons"]:
             print(f"   Reason: {r}")
         print(f"   Daily spent so far: ${result['daily_spent_usd']:,.2f} / ${result['daily_limit_usd']:,.2f}")
+
+    # 7) Restart persistence + idempotent retry: a brand-new Guard on the
+    # same store still sees today's $72, and retrying scenario 1 with
+    # its payment_id is allowed without counting the $42 twice.
+    print("\n🛡️ 7) After a restart, retry the $42 payment (same payment_id)")
+    guard2 = Guard(
+        per_tx_limit_usd=1000,
+        daily_limit_usd=500,
+        blocklist=["0xScamWallet", "scam@example.com"],
+        max_price_deviation_pct=10,
+        store_path=store_path,
+    )
+    print(f"   New instance sees daily spent: ${guard2.daily_spent('demo-agent'):,.2f} (restart kept it)")
+    retry = guard2.check(
+        {
+            "agent_id": "demo-agent",
+            "recipient": "0xMerchant123",
+            "amount_usd": 42,
+            "action": "purchase",
+            "token": "USDC",
+            "payment_id": "demo-pay-001",
+            "reference_price_usd": 42,
+            "quoted_price_usd": 42,
+        }
+    )
+    print(f"   Verdict: {retry['verdict']}")
+    for r in retry["reasons"]:
+        print(f"   Reason: {r}")
+    print(f"   Daily spent so far: ${retry['daily_spent_usd']:,.2f} / ${retry['daily_limit_usd']:,.2f} (still $72, not $114)")
+
+    guard.close()
+    guard2.close()
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.remove(store_path + suffix)
+        except OSError:
+            pass
     print("\n" + "=" * 64)
-    print("Done. 2 ALLOW, 4 BLOCK as expected.")
+    print("Done. 3 ALLOW, 4 BLOCK as expected.")
     print("=" * 64)
 
 

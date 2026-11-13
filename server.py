@@ -2,8 +2,12 @@
 """
 Aegis Lite API server. Python stdlib only.
 Run: python3 server.py   (PORT env, default 8000)
+Store: sqlite file, AEGIS_LITE_DB env or the default aegis_lite.db next
+to the aegis_lite module. Daily spend and payment records persist
+across restarts and are shared by every instance using the same file.
 Endpoints:
-  POST /check  -> JSON verdict
+  POST /check  -> JSON verdict (body may include payment_id for
+                  idempotent retries: max 2 retries per payment_id)
   GET  /health -> {"status":"ok"}
   GET  /       -> HTML dashboard (recent checks, in-memory)
   GET  /api/log -> JSON log
@@ -20,6 +24,7 @@ guard = Guard(
     daily_limit_usd=500,
     blocklist=["0xScamWallet", "scam@example.com"],
     max_price_deviation_pct=10,
+    store_path=os.environ.get("AEGIS_LITE_DB") or None,
 )
 
 LOG: list[dict] = []

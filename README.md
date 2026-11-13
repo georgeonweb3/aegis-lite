@@ -9,10 +9,15 @@ Built by George Agbe. Lightweight version of Aegis (spend control for AI agents 
 ## What it blocks
 
 - Spend over your per-transaction limit
-- Spend over your daily limit (tracked per agent, in memory)
+- Spend over your daily limit (tracked per agent, persisted in SQLite, shared across restarts and instances)
 - Payments to blocklisted recipients, or anyone not on your allowlist
 - Unlimited token approvals and `setApprovalForAll` - even at $0
 - Quotes that drift too far from the reference price (default 10%)
+- A payment retried past its retry cap, or a `payment_id` reused with a different payload
+
+## Retries, done safely
+
+Pass a `payment_id` (any idempotency key, e.g. your payment UUID) in the check request. The first check records the spend once. If the payment fails and your agent retries with the same `payment_id`, the guard re-runs every check with that payment's own amount excluded from daily spend, so it cannot double-count. At most 2 retries per `payment_id` (3 checks total); a 3rd retry is blocked, and reusing a `payment_id` with a different amount, recipient or action is blocked. If other spending has eaten the daily budget since, the retry is blocked too. Blocked checks never consume budget and never count toward the retry cap. Without a `payment_id`, behaviour is exactly as before — but a retried payment can then double-count or skip re-check, so use one whenever your agent retries.
 
 ## Quick start
 
@@ -52,12 +57,13 @@ JS example in `examples/agent_example.js`, Python API example in `examples/agent
   "amount_usd": 42,
   "action": "purchase",
   "token": "USDC",
+  "payment_id": "pay_01J…",
   "reference_price_usd": 100,
   "quoted_price_usd": 102
 }
 ```
 
-`token`, `reference_price_usd`, and `quoted_price_usd` are optional. Price check only runs when both prices are present.
+`token`, `payment_id`, `reference_price_usd`, and `quoted_price_usd` are optional. Price check only runs when both prices are present. `payment_id` is your idempotency key for retries (see above); omit it only if your agent never retries a payment.
 
 ## API
 
@@ -78,8 +84,10 @@ JS example in `examples/agent_example.js`, Python API example in `examples/agent
 | `allowlist` | [] | If set, only these recipients pass |
 | `blocked_actions` | unlimited approval + setApprovalForAll | Actions always blocked |
 | `max_price_deviation_pct` | 10 | Max quoted vs reference drift |
+| `store_path` | `aegis_lite.db` next to the module | SQLite file for daily spend + payment records; the server reads `AEGIS_LITE_DB` instead. `":memory:"` keeps it per-instance |
+| `max_retries` | 2 | Retries allowed per `payment_id` after the first check (3 checks total) |
 
-Note: daily tracking is in-memory in this Lite version. Restart clears it. The hosted version persists it per project.
+Daily tracking is persisted in SQLite (WAL mode). Restarting the guard keeps today's spend, and two instances using the same store file share one budget — the check-and-record runs in a single transaction, so two instances cannot both pass the cap at once. A new UTC day still resets to zero. If the store file cannot be opened, the guard logs a warning and falls back to in-memory tracking (restarts will reset daily spend, as before).
 
 ## Pricing
 
@@ -97,10 +105,11 @@ Hackathon teams shipping an agent in a weekend who do not want a drained wallet 
 ```
 aegis_lite/guard.py    core Guard class
 aegis_lite/__init__.py exports Guard
+aegis_lite.db          sqlite store, created at runtime (gitignored)
 server.py              http.server API + dashboard
-demo.py                6 scenarios
+demo.py                7 scenarios
 examples/              Python + JS integration examples
-tests/test_guard.py    unittest, all scenarios + daily exhaustion
+tests/test_guard.py    unittest, all scenarios + daily exhaustion + persistence/retries
 SALES_KIT.md           pitch, DM script, first 10 buyers
 ```
 
